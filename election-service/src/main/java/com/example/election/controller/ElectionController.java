@@ -7,8 +7,10 @@ import com.example.election.enums.ElectionStatus;
 import com.example.election.repository.CandidateRepository;
 import com.example.election.repository.ElectionRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -21,9 +23,22 @@ public class ElectionController {
     private final ElectionRepository electionRepository;
     private final CandidateRepository candidateRepository;
 
-    // Create a new election
+    private Election findElection(Long id) {
+        return electionRepository.findById(id)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Election not found"));
+    }
+
+    // Create a new election (ADMIN)
     @PostMapping
     public ResponseEntity<ElectionResponse> createElection(@RequestBody CreateElectionRequest request) {
+        if (request.title() == null || request.title().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Title is required");
+        }
+        if (request.startTime() == null || request.endTime() == null
+                || !request.endTime().isAfter(request.startTime())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "End time must be after start time");
+        }
+
         Election election = new Election();
         election.setTitle(request.title());
         election.setDescription(request.description());
@@ -35,12 +50,14 @@ public class ElectionController {
         return ResponseEntity.ok(ElectionResponse.fromEntity(saved));
     }
 
-    // Add a candidate to an election
+    // Add a candidate to an election (ADMIN)
     @PostMapping("/{electionId}/candidates")
     public ResponseEntity<String> addCandidate(@PathVariable Long electionId,
-                                                @RequestBody CandidateRequest request) {
-        Election election = electionRepository.findById(electionId)
-                .orElseThrow(() -> new RuntimeException("Election not found"));
+                                               @RequestBody CandidateRequest request) {
+        if (request.name() == null || request.name().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Candidate name is required");
+        }
+        Election election = findElection(electionId);
 
         Candidate candidate = new Candidate();
         candidate.setName(request.name());
@@ -51,7 +68,7 @@ public class ElectionController {
         return ResponseEntity.ok("Candidate added successfully");
     }
 
-    // List all elections
+    // List all elections (public)
     @GetMapping
     public ResponseEntity<List<ElectionResponse>> getAllElections() {
         List<ElectionResponse> elections = electionRepository.findAll()
@@ -61,37 +78,37 @@ public class ElectionController {
         return ResponseEntity.ok(elections);
     }
 
-    // Get a single election by ID
+    // Get a single election by ID (public)
     @GetMapping("/{id}")
     public ResponseEntity<ElectionResponse> getElection(@PathVariable Long id) {
-        Election election = electionRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Election not found"));
-        return ResponseEntity.ok(ElectionResponse.fromEntity(election));
+        return ResponseEntity.ok(ElectionResponse.fromEntity(findElection(id)));
     }
 
-    // Open voting for an election
+    // Open voting (ADMIN)
     @PutMapping("/{id}/open")
     public ResponseEntity<String> openElection(@PathVariable Long id) {
-        Election election = electionRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Election not found"));
+        Election election = findElection(id);
         election.setStatus(ElectionStatus.OPEN);
         electionRepository.save(election);
         return ResponseEntity.ok("Election is now OPEN");
     }
 
-    // Close voting for an election
+    // Close voting (ADMIN)
     @PutMapping("/{id}/close")
     public ResponseEntity<String> closeElection(@PathVariable Long id) {
-        Election election = electionRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Election not found"));
+        Election election = findElection(id);
         election.setStatus(ElectionStatus.CLOSED);
         electionRepository.save(election);
         return ResponseEntity.ok("Election is now CLOSED");
     }
 
-    // Get candidates for an election
+    // Candidates of an election (public)
     @GetMapping("/{electionId}/candidates")
-    public ResponseEntity<List<Candidate>> getCandidates(@PathVariable Long electionId) {
-        return ResponseEntity.ok(candidateRepository.findByElectionId(electionId));
+    public ResponseEntity<List<CandidateResponse>> getCandidates(@PathVariable Long electionId) {
+        List<CandidateResponse> candidates = candidateRepository.findByElectionId(electionId)
+                .stream()
+                .map(c -> new CandidateResponse(c.getId(), c.getName(), c.getParty()))
+                .collect(Collectors.toList());
+        return ResponseEntity.ok(candidates);
     }
 }
